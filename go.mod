@@ -40,7 +40,7 @@ require (
 	github.com/prometheus/client_golang v1.16.0
 	github.com/rakyll/statik v0.1.7
 	github.com/rs/cors v1.9.0
-	github.com/skip-mev/block-sdk v0.0.0-20230918143603-010ccbbb311f
+	github.com/skip-mev/block-sdk v1.3.0-alpha.1.0.20231229182244-7d94d96143a6
 	github.com/spf13/cast v1.6.0
 	github.com/spf13/cobra v1.8.0
 	github.com/spf13/pflag v1.0.5
@@ -246,4 +246,5 @@ replace (
 	github.com/skip-mev/block-sdk => ../block-sdk
 	// replace broken goleveldb
 	github.com/syndtr/goleveldb => github.com/syndtr/goleveldb v1.0.1-0.20210819022825-2ae1ddf74ef7
+	golang.org/x/exp => golang.org/x/exp v0.0.0-20230711153332-06a737ee72cb
 )

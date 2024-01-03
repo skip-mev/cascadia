@@ -1,9 +1,9 @@
 # syntax=docker/dockerfile:1
 ARG RUNNER_IMAGE="gcr.io/distroless/static-debian11"
-ARG GO_VERSION="1.20"
+ARG GO_VERSION="1.21.5"
 
 # Builder image
-FROM golang:1.20-alpine3.18 AS build-env
+FROM golang:1.21.5-alpine3.18 AS build-env
 
 ARG GIT_VERSION
 ARG GIT_COMMIT
@@ -71,4 +71,4 @@ ENV HOME /cascadia
 WORKDIR $HOME
 EXPOSE 26656 26657 1317 1318 9090 9091
 
-ENTRYPOINT ["cascadiad"]
+ENTRYPOINT ["cascadiad", "start"]

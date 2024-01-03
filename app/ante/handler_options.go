@@ -38,9 +38,9 @@ import (
 	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
 	wasmTypes "github.com/CosmWasm/wasmd/x/wasm/types"
 	storetypes "github.com/cosmos/cosmos-sdk/store/types"
+	blocksdk "github.com/skip-mev/block-sdk/block"
 	auctionante "github.com/skip-mev/block-sdk/x/auction/ante"
 	auctionkeeper "github.com/skip-mev/block-sdk/x/auction/keeper"
-	blocksdkanteignore "github.com/skip-mev/block-sdk/block/utils"
 )
 
 // HandlerOptions defines the list of module keepers required to run the Cascadia
@@ -66,10 +66,10 @@ type HandlerOptions struct {
 
 	// Auction deps
 	AuctionKeeper auctionkeeper.Keeper
-	TxEncoder sdk.TxEncoder
-	MEVLane auctionante.MEVLane
-	FreeLanes []blocksdkanteignore.Lane
-	Mempool auctionante.Mempool
+	TxEncoder     sdk.TxEncoder
+	MEVLane       auctionante.MEVLane
+	FreeLanes     []blocksdk.Lane
+	Mempool       blocksdk.Mempool
 }
 
 // Validate checks if the keepers are defined
@@ -114,7 +114,6 @@ func (options HandlerOptions) Validate() error {
 		return errorsmod.Wrap(errortypes.ErrLogic, "mev lane is required for AnteHandler")
 	}
 
-
 	return nil
 }
 
@@ -134,7 +133,7 @@ func newEVMAnteHandler(options HandlerOptions) sdk.AnteHandler {
 		// notice, any transactions matching the Free-lane will not be subject to gas / fee deduction,
 		// so this ante-handler will be skipped. This is here in case any specific
 		// MsgEthereumTxs are to be free.
-		blocksdkanteignore.NewIgnoreDecorator(
+		blocksdk.NewIgnoreDecorator(
 			evmante.NewEthGasConsumeDecorator(options.BankKeeper, options.DistributionKeeper, options.EvmKeeper, options.StakingKeeper, options.MaxTxGasWanted),
 			options.FreeLanes...,
 		),
@@ -162,7 +161,7 @@ func newCosmosAnteHandler(options HandlerOptions) sdk.AnteHandler {
 		ante.NewConsumeGasForTxSizeDecorator(options.AccountKeeper),
 		// notice, any transactions matching the Free-lane will not be subject to gas / fee deduction,
 		// so this ante-handler will be skipped.
-		blocksdkanteignore.NewIgnoreDecorator(
+		blocksdk.NewIgnoreDecorator(
 			cosmosante.NewDeductFeeDecorator(options.AccountKeeper, options.BankKeeper, options.DistributionKeeper, options.FeegrantKeeper, options.StakingKeeper, options.TxFeeChecker),
 			options.FreeLanes...,
 		),
@@ -180,7 +179,44 @@ func newCosmosAnteHandler(options HandlerOptions) sdk.AnteHandler {
 			options.AuctionKeeper,
 			options.TxEncoder,
 			options.MEVLane,
-			options.Mempool,
+		),
+	)
+}
+
+// newCosmosAnteHandler creates the default ante handler for Cosmos transactions w/o sequence checking
+func newCosmosAnteHandlerNoSeq(options HandlerOptions) sdk.AnteHandler {
+	return sdk.ChainAnteDecorators(
+		cosmosante.RejectMessagesDecorator{}, // reject MsgEthereumTxs
+		cosmosante.NewAuthzLimiterDecorator( // disable the Msg types that cannot be included on an authz.MsgExec msgs field
+			sdk.MsgTypeURL(&evmtypes.MsgEthereumTx{}),
+			sdk.MsgTypeURL(&sdkvesting.MsgCreateVestingAccount{}),
+		),
+		ante.NewSetUpContextDecorator(),
+		ante.NewExtensionOptionsDecorator(options.ExtensionOptionChecker),
+		ante.NewValidateBasicDecorator(),
+		ante.NewTxTimeoutHeightDecorator(),
+		ante.NewValidateMemoDecorator(options.AccountKeeper),
+		cosmosante.NewMinGasPriceDecorator(options.FeeMarketKeeper, options.EvmKeeper),
+		ante.NewConsumeGasForTxSizeDecorator(options.AccountKeeper),
+		// notice, any transactions matching the Free-lane will not be subject to gas / fee deduction,
+		// so this ante-handler will be skipped.
+		blocksdk.NewIgnoreDecorator(
+			cosmosante.NewDeductFeeDecorator(options.AccountKeeper, options.BankKeeper, options.DistributionKeeper, options.FeegrantKeeper, options.StakingKeeper, options.TxFeeChecker),
+			options.FreeLanes...,
+		),
+		// SetPubKeyDecorator must be called before all signature verification decorators
+		ante.NewSetPubKeyDecorator(options.AccountKeeper),
+		ante.NewValidateSigCountDecorator(options.AccountKeeper),
+		ante.NewSigGasConsumeDecorator(options.AccountKeeper, options.SigGasConsumer),
+		ante.NewSigVerificationDecorator(options.AccountKeeper, options.SignModeHandler),
+		ibcante.NewRedundantRelayDecorator(options.IBCKeeper),
+		evmante.NewGasWantedDecorator(options.EvmKeeper, options.FeeMarketKeeper),
+		wasmkeeper.NewLimitSimulationGasDecorator(options.WasmConfig.SimulationGasLimit),
+		wasmkeeper.NewCountTXDecorator(options.TxCounterStoreKey),
+		auctionante.NewAuctionDecorator(
+			options.AuctionKeeper,
+			options.TxEncoder,
+			options.MEVLane,
 		),
 	)
 }
@@ -201,7 +237,7 @@ func newLegacyCosmosAnteHandlerEip712(options HandlerOptions) sdk.AnteHandler {
 		ante.NewConsumeGasForTxSizeDecorator(options.AccountKeeper),
 		// notice, any transactions matching the Free-lane will not be subject to gas / fee deduction,
 		// so this ante-handler will be skipped.
-		blocksdkanteignore.NewIgnoreDecorator(
+		blocksdk.NewIgnoreDecorator(
 			cosmosante.NewDeductFeeDecorator(options.AccountKeeper, options.BankKeeper, options.DistributionKeeper, options.FeegrantKeeper, options.StakingKeeper, options.TxFeeChecker),
 			options.FreeLanes...,
 		),
@@ -221,7 +257,6 @@ func newLegacyCosmosAnteHandlerEip712(options HandlerOptions) sdk.AnteHandler {
 			options.AuctionKeeper,
 			options.TxEncoder,
 			options.MEVLane,
-			options.Mempool,
 		),
 	)
 }

@@ -183,7 +183,6 @@ import (
 	blocksdk "github.com/skip-mev/block-sdk/block"
 	"github.com/skip-mev/block-sdk/block/base"
 	blocksdkbase "github.com/skip-mev/block-sdk/block/base"
-	blocksdkanteignore "github.com/skip-mev/block-sdk/block/utils"
 	base_lane "github.com/skip-mev/block-sdk/lanes/base"
 	"github.com/skip-mev/block-sdk/lanes/free"
 	free_lane "github.com/skip-mev/block-sdk/lanes/free"
@@ -381,9 +380,9 @@ type Cascadia struct {
 	tpsCounter *tpsCounter
 
 	// auction-ante-handler deps
-	Mempool   auctionante.Mempool
+	Mempool   blocksdk.Mempool
 	MEVLane   auctionante.MEVLane
-	FreeLanes []blocksdkanteignore.Lane
+	FreeLanes []blocksdk.Lane
 }
 
 // New returns a reference to an initialized blockchain app
@@ -910,30 +909,34 @@ func NewCascadia(
 		MaxTxs:          0,
 	}
 
-	baseLane := base_lane.NewDefaultLane(cfg)
+	baseLane := base_lane.NewDefaultLane(cfg, base.DefaultMatchHandler())
 
 	freeLane := free_lane.NewFreeLane(
 		cfg,
 		base.DefaultTxPriority(),
 		free.DefaultMatchHandler(), // modify this match-handler to determine any other transactions that the chain would like to be free
 	)
-	app.FreeLanes = []blocksdkanteignore.Lane{freeLane}
+	app.FreeLanes = []blocksdk.Lane{freeLane}
 
+	mevLaneFactory := mev_lane.NewDefaultAuctionFactory(app.GetTxConfig().TxDecoder(), cascadiablocksdk.NewSignerExtractorAdapter())
 	mevLane := mev_lane.NewMEVLane(
 		cfg,
-		mev_lane.NewDefaultAuctionFactory(app.GetTxConfig().TxDecoder(), cascadiablocksdk.NewSignerExtractorAdapter()),
+		mevLaneFactory,
+		mevLaneFactory.MatchHandler(),
 	)
 	app.MEVLane = mevLane
 	// initialize mempool
-	mempool := blocksdk.NewLanedMempool(
+	mempool, err := blocksdk.NewLanedMempool(
 		app.Logger(),
-		true,
 		[]blocksdk.Lane{
 			mevLane,  // mev-lane is first to prioritize bids being placed at the TOB
 			freeLane, // free-lane is second to prioritize free txs
 			baseLane, // finally, all the rest of txs...
-		}...,
+		},
 	)
+	if err != nil {
+		panic(fmt.Errorf("failed to create mempool: %w", err))
+	}
 
 	// set the mempool first
 	app.SetMempool(mempool)
@@ -955,6 +958,7 @@ func NewCascadia(
 	proposalHandler := blocksdkabci.NewProposalHandler(
 		app.Logger(),
 		app.GetTxConfig().TxDecoder(),
+		app.GetTxConfig().TxEncoder(),
 		mempool,
 	)
 	// proposal-handler
@@ -962,15 +966,24 @@ func NewCascadia(
 	app.SetProcessProposal(proposalHandler.ProcessProposalHandler())
 
 	// custom check-tx
-	checkTxHandler := mev_lane.NewCheckTxHandler(
+	mevCheckTxHandler := checktx.NewMEVCheckTxHandler(
 		app.BaseApp, // want access to the base-application's non-overridden check-tx
 		app.GetTxConfig().TxDecoder(),
 		mevLane,
 		anteHandler,
+		app.BaseApp.CheckTx,
 		app.ChainID(),
 	)
 
-	app.SetCheckTx(checkTxHandler.CheckTx())
+	// wrap the mev checkTxHandler with mempool parity handler
+	parityCheckTx := checktx.NewMempoolParityCheckTx(
+		app.Logger(),
+		mempool,
+		app.GetTxConfig().TxDecoder(),
+		mevCheckTxHandler.CheckTx(),
+	)
+
+	app.SetCheckTx(parityCheckTx.CheckTx())
 
 	app.setPostHandler()
 	app.SetEndBlocker(app.EndBlocker)
@@ -1010,7 +1023,7 @@ func (app *Cascadia) CheckTx(req cometabci.RequestCheckTx) cometabci.ResponseChe
 }
 
 // SetCheckTx sets the checkTxHandler for the app.
-func (app *Cascadia) SetCheckTx(handler mev_lane.CheckTx) {
+func (app *Cascadia) SetCheckTx(handler checktx.CheckTx) {
 	app.checkTxHandler = handler
 }
 
