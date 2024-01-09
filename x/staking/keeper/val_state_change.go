@@ -108,6 +108,7 @@ func (k Keeper) BlockValidatorUpdates(ctx sdk.Context) []abci.ValidatorUpdate {
 // at the previous block height or were removed from the validator set entirely
 // are returned to Tendermint.
 func (k Keeper) ApplyAndReturnValidatorSetUpdates(ctx sdk.Context) (updates []abci.ValidatorUpdate, err error) {
+	ctx.Logger().Info("Acquiring custom logs beep boop")
 	params := k.GetParams(ctx)
 	maxValidators := params.MaxValidators
 	powerReduction := k.PowerReduction(ctx)
@@ -139,12 +140,16 @@ func (k Keeper) ApplyAndReturnValidatorSetUpdates(ctx sdk.Context) (updates []ab
 		// if we get to a zero-power validator (which we don't bond),
 		// there are no more possible bonded validators
 		if validator.PotentialConsensusPower(k.PowerReduction(ctx)) == 0 {
+			ctx.Logger().Info("potential consensus power of power reduction is 0")
+			ctx.Logger().Info("values", "power reduction", k.PowerReduction(ctx), "tokens", validator.GetTokens())
+			ctx.Logger().Info(validator.String())
 			break
 		}
 
 		// apply the appropriate state change if necessary
 		switch {
 		case validator.IsUnbonded():
+			ctx.Logger().Info("validator is unbodned, bonding", "valString", validator.String())
 			validator, err = k.unbondedToBonded(ctx, validator)
 			if err != nil {
 				return
@@ -172,6 +177,8 @@ func (k Keeper) ApplyAndReturnValidatorSetUpdates(ctx sdk.Context) (updates []ab
 		newPowerBytes := k.cdc.MustMarshal(&gogotypes.Int64Value{Value: newPower})
 
 		// update the validator set if power has changed
+		ctx.Logger().Info("validator power changed", "old power", oldPowerBytes, "new power", newPowerBytes)
+		ctx.Logger().Info("validator found value", "found", found)
 		if !found || !bytes.Equal(oldPowerBytes, newPowerBytes) {
 			updates = append(updates, validator.ABCIValidatorUpdate(powerReduction))
 
@@ -216,6 +223,7 @@ func (k Keeper) ApplyAndReturnValidatorSetUpdates(ctx sdk.Context) (updates []ab
 	}
 
 	// set total power on lookup index if there are any updates
+	ctx.Logger().Info("update length", "len", len(updates))
 	if len(updates) > 0 {
 		k.SetLastTotalPower(ctx, totalPower)
 	}
@@ -223,6 +231,9 @@ func (k Keeper) ApplyAndReturnValidatorSetUpdates(ctx sdk.Context) (updates []ab
 	// set the list of validator updates
 	k.SetValidatorUpdates(ctx, updates)
 
+	for _, update := range updates {
+		ctx.Logger().Info("validator update", "update", update.String())
+	}
 	return updates, err
 }
 
